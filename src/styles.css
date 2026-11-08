@@ -1,0 +1,260 @@
+@import '@fontsource-variable/dm-sans';
+@import '@fontsource-variable/plus-jakarta-sans';
+@import '@fontsource-variable/jetbrains-mono';
+@import 'tailwindcss';
+
+/*
+ * Qoody "Warm Tactile Ledger" tokens, ported from qoody/mobile/.../ui/theme/Color.kt.
+ * Raw hex values live here and nowhere else.
+ */
+@theme {
+  --font-display: 'DM Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+
+  --color-surface: #fcf9f4;
+  --color-surface-dim: #dcdad5;
+  --color-paper: #ffffff;
+  --color-surface-low: #f6f3ee;
+  --color-surface-mid: #f0ede9;
+  --color-surface-high: #ebe8e3;
+  --color-surface-highest: #e5e2dd;
+  --color-ink: #1c1c19;
+  --color-ink-variant: #5b403a;
+  --color-inverse: #31302d;
+  --color-inverse-ink: #f3f0eb;
+  --color-outline: #8f7069;
+  --color-outline-variant: #e3beb6;
+  --color-primary: #b52603;
+  --color-accent: #ff5a36;
+  --color-accent-pressed: #e04624;
+  --color-accent-soft: #ffdad2;
+  --color-on-accent-soft: #3d0600;
+  --color-secondary: #605e5a;
+  --color-tertiary: #96928c;
+  --color-error: #ba1a1a;
+  --color-error-soft: #ffdad6;
+  --color-hairline: #e8e4dc;
+  --color-pressed: #f3efe6;
+  --color-perforation: #d5d0c5;
+  --color-positive: #059669;
+
+  --color-sage: #688b77;
+  --color-lavender: #847596;
+  --color-coral: #d97e6a;
+  --color-slate: #8c887f;
+  --color-sky: #7ea8be;
+  --color-amber: #d4a373;
+  --color-sage-tint: #e5ede5;
+  --color-peach-tint: #fdece3;
+  --color-lavender-tint: #efebf8;
+  --color-sky-tint: #e4eef5;
+  --color-butter-tint: #faf2d9;
+  --color-mist-tint: #eaecef;
+
+  --radius-tag: 4px;
+  --radius-field: 12px;
+  --radius-card: 16px;
+  --radius-sheet: 24px;
+
+  --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    color-scheme: light;
+  }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background: var(--color-surface);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 20px;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior-y: none;
+  }
+  button {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+  input[type='date']::-webkit-calendar-picker-indicator {
+    opacity: 0;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+  }
+}
+
+/* Type scale from QoodyTypography.kt */
+@utility t-display-hero {
+  font-family: var(--font-display);
+  font-size: 44px;
+  line-height: 52px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+@utility t-headline-lg {
+  font-family: var(--font-display);
+  font-size: 26px;
+  line-height: 32px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+@utility t-headline-md {
+  font-family: var(--font-display);
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+@utility t-headline-sm {
+  font-family: var(--font-display);
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 600;
+}
+@utility t-title-md {
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+@utility t-button-sm {
+  font-family: var(--font-display);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+@utility t-wordmark {
+  font-family: var(--font-display);
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+@utility t-body-lg {
+  font-size: 16px;
+  line-height: 24px;
+}
+@utility t-body-md {
+  font-size: 14px;
+  line-height: 20px;
+}
+@utility t-body-sm {
+  font-size: 12px;
+  line-height: 18px;
+}
+@utility t-label-caps {
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+@utility t-num-hero {
+  font-family: var(--font-mono);
+  font-size: 36px;
+  line-height: 44px;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+@utility t-num-lg {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+@utility t-num-md {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+@utility t-num-sm {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The dashed "tear here" line of a receipt. */
+@utility perforation {
+  height: 1px;
+  opacity: 0.4;
+  background-image: linear-gradient(to right, var(--color-perforation) 8px, transparent 8px);
+  background-size: 14px 1px;
+  background-repeat: repeat-x;
+}
+
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@utility animate-sheet-in {
+  animation: sheet-in 260ms var(--ease-out-soft);
+}
+@utility animate-fade-in {
+  animation: fade-in 200ms ease-out;
+}
+@utility animate-toast-in {
+  animation: toast-in 200ms var(--ease-out-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
