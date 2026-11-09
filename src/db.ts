@@ -47,12 +47,24 @@ export interface Setting {
   value: string
 }
 
+/** An analytics event that could not go to gtag at once, replayed in order later. Never backed up. */
+export interface QueuedEvent {
+  id: number
+  name: string
+  params: Record<string, string | number | boolean>
+  /** Epoch ms when the event happened. */
+  queued_at: number
+  /** True when it was queued because the device was offline or gtag.js failed (not just still loading). */
+  offline?: boolean
+}
+
 export const db = new Dexie('reimburse-me') as Dexie & {
   expenses: EntityTable<Expense, 'id'>
   billedTo: EntityTable<BilledTo, 'id'>
   natures: EntityTable<Nature, 'id'>
   receipts: EntityTable<Receipt, 'id'>
   settings: EntityTable<Setting, 'key'>
+  analyticsQueue: EntityTable<QueuedEvent, 'id'>
 }
 
 db.version(1).stores({
@@ -62,6 +74,18 @@ db.version(1).stores({
   receipts: 'id, expenseId',
   settings: 'key',
 })
+
+db.version(2).stores({
+  expenses: 'id, date, billedToId, natureId, createdAt',
+  billedTo: 'id, &name, lastUsedAt',
+  natures: 'id, order',
+  receipts: 'id, expenseId',
+  settings: 'key',
+  analyticsQueue: '++id, queued_at',
+})
+
+/** Settings about this device's analytics (opt-out, first touch, notice): kept out of backups and delete-all. */
+export const isDeviceSetting = (key: string) => key.startsWith('analytics_')
 
 export const PRESET_NATURES: Omit<Nature, 'order'>[] = [
   { id: 'travel', name: 'Travel', emoji: '🚕', tone: 'slate', builtIn: true },
@@ -86,8 +110,11 @@ db.on('populate', (tx) => {
  */
 export async function wipeAllData() {
   await db.transaction('rw', db.tables, async () => {
-    await Promise.all(db.tables.map((t) => t.clear()))
+    const keep = await db.settings.filter((s) => isDeviceSetting(s.key)).toArray()
+    // The analytics queue belongs to the device too: unsent events survive a wipe.
+    await Promise.all(db.tables.filter((t) => t !== db.analyticsQueue).map((t) => t.clear()))
     await db.natures.bulkAdd(presetNatureRows())
+    await db.settings.bulkAdd(keep)
   })
 }
 

@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, Trash2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { IconButton } from '../components/ui'
 import { useObjectUrl } from '../hooks'
+import { overlayView, track } from '../lib/analytics'
 import { useBackLayer } from '../lib/backstack'
 
 /** Full-screen receipt photo on dark ink, with paging and remove. */
@@ -9,6 +10,11 @@ export function ReceiptViewer({ blobs, start, onClose, onDelete }: { blobs: Blob
   const [i, setI] = useState(start)
   const url = useObjectUrl(blobs[i])
   useBackLayer(true, onClose)
+
+  useEffect(() => {
+    track('receipt_view', { receipt_count: blobs.length })
+    return overlayView('receipt')
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

@@ -53,6 +53,20 @@ export default defineConfig(({ command }) => ({
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         navigateFallback: '/index.html',
         cleanupOutdatedCaches: true,
+        // gtag.js (and the destination script it pulls in) must load when the app starts offline so queued analytics can replay later.
+        // Hits to google-analytics.com/g/collect are deliberately not routed through the SW.
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/www\.googletagmanager\.com\/gtag\/(js|destination)/,
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'gtag',
+              expiration: { maxEntries: 2, maxAgeSeconds: 7 * 24 * 60 * 60 },
+              // The script is loaded with crossorigin, so responses are CORS (200), never opaque (0) with quota padding.
+              cacheableResponse: { statuses: [200] },
+            },
+          },
+        ],
       },
     }),
   ],

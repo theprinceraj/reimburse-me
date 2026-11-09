@@ -1,4 +1,4 @@
-import { db } from '../db'
+import { db, isDeviceSetting } from '../db'
 import { blobToDataUrl, dataUrlToBlob } from './images'
 
 const FORMAT = 'reimburse-me-backup'
@@ -14,7 +14,7 @@ export async function exportBackup(): Promise<Blob> {
     db.settings.toArray(),
   ])
   const encoded = await Promise.all(receipts.map(async ({ blob, ...r }) => ({ ...r, data: await blobToDataUrl(blob) })))
-  const json = JSON.stringify({ format: FORMAT, version: VERSION, exportedAt: new Date().toISOString(), expenses, billedTo, natures, receipts: encoded, settings })
+  const json = JSON.stringify({ format: FORMAT, version: VERSION, exportedAt: new Date().toISOString(), expenses, billedTo, natures, receipts: encoded, settings: settings.filter((s) => !isDeviceSetting(s.key)) })
   return new Blob([json], { type: 'application/json' })
 }
 
@@ -28,17 +28,18 @@ export async function importBackup(file: File): Promise<number> {
   }
   if (data.format !== FORMAT || typeof data.version !== 'number') throw new Error("That file isn't a Reimburse Me backup.")
   if (data.version > VERSION) throw new Error('This backup is from a newer version of the app. Update first.')
-  const arr = (k: string) => (Array.isArray(data[k]) ? (data[k] as never[]) : [])
+  const arr = <T = never>(k: string): T[] => (Array.isArray(data[k]) ? (data[k] as T[]) : [])
   const receipts = await Promise.all(
     arr('receipts').map(async ({ data: d, ...r }: { data: string }) => ({ ...(r as object), blob: await dataUrlToBlob(d) })),
   )
   await db.transaction('rw', [db.expenses, db.billedTo, db.natures, db.receipts, db.settings], async () => {
+    const device = await db.settings.filter((s) => isDeviceSetting(s.key)).toArray()
     await Promise.all([db.expenses.clear(), db.billedTo.clear(), db.natures.clear(), db.receipts.clear(), db.settings.clear()])
     await db.expenses.bulkAdd(arr('expenses'))
     await db.billedTo.bulkAdd(arr('billedTo'))
     await db.natures.bulkAdd(arr('natures'))
     await db.receipts.bulkAdd(receipts as never[])
-    await db.settings.bulkAdd(arr('settings'))
+    await db.settings.bulkAdd([...arr<{ key: string }>('settings').filter((s) => !isDeviceSetting(s.key)), ...device] as never[])
   })
   return arr('expenses').length
 }

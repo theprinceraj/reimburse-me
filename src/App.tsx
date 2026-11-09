@@ -1,10 +1,12 @@
 import { FileOutput, Plus, ReceiptText, Settings as SettingsIcon } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 import { useRegisterSW } from 'virtual:pwa-register/react'
+import { AnalyticsNotice } from './components/AnalyticsNotice'
 import { cx, PrimaryButton } from './components/ui'
 import { InstallPrompt } from './components/InstallPrompt'
 import { ToastProvider } from './components/Toast'
 import { requestPersistence } from './db'
+import { pageView, track, trackNow } from './lib/analytics'
 import { ClaimScreen } from './screens/ClaimScreen'
 import { ExpenseSheet } from './screens/ExpenseSheet'
 import { LedgerScreen } from './screens/LedgerScreen'
@@ -26,6 +28,7 @@ export function App() {
 
   useEffect(() => {
     window.scrollTo({ top: 0 })
+    pageView(tab)
   }, [tab])
 
   return (
@@ -59,6 +62,7 @@ export function App() {
       <BottomNav tab={tab} onChange={setTab} />
       <ExpenseSheet editing={editing} onClose={() => setEditing(undefined)} />
       <InstallPrompt suppressed={editing !== undefined} />
+      <AnalyticsNotice suppressed={editing !== undefined} raised={tab === 'expenses'} onOpenSettings={() => setTab('settings')} />
       <UpdatePrompt />
     </ToastProvider>
   )
@@ -105,15 +109,32 @@ function UpdatePrompt() {
     needRefresh: [needRefresh, setNeedRefresh],
     updateServiceWorker,
   } = useRegisterSW()
+  useEffect(() => {
+    if (needRefresh) track('sw_update_available')
+  }, [needRefresh])
   if (!needRefresh) return null
   return (
     <div className="fixed inset-x-0 top-0 z-50 flex justify-center px-4 pt-[max(12px,env(safe-area-inset-top))]">
       <div className="flex w-full max-w-[560px] animate-toast-in items-center gap-3 rounded-field bg-inverse py-2 pr-2 pl-4 text-inverse-ink shadow-lg">
         <span className="flex-1 t-body-md">A new version is ready.</span>
-        <button type="button" className="min-h-10 rounded-full px-3 t-button-sm text-inverse-ink/70" onClick={() => setNeedRefresh(false)}>
+        <button
+          type="button"
+          className="min-h-10 rounded-full px-3 t-button-sm text-inverse-ink/70"
+          onClick={() => {
+            setNeedRefresh(false)
+            track('sw_update_later')
+          }}
+        >
           Later
         </button>
-        <button type="button" className="min-h-10 rounded-full bg-accent px-4 t-button-sm text-white" onClick={() => updateServiceWorker(true)}>
+        <button
+          type="button"
+          className="min-h-10 rounded-full bg-accent px-4 t-button-sm text-white"
+          onClick={async () => {
+            await trackNow('sw_update_applied')
+            updateServiceWorker(true)
+          }}
+        >
           Reload
         </button>
       </div>

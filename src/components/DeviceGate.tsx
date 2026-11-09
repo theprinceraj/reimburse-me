@@ -1,5 +1,6 @@
 import { RotateCcw, Smartphone } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
+import { track } from '../lib/analytics'
 
 type Block = 'desktop' | 'landscape' | null
 
@@ -30,6 +31,10 @@ export function DeviceGate({ children }: { children: ReactNode }) {
       window.removeEventListener('resize', update)
     }
   }, [])
+
+  useEffect(() => {
+    if (block) track('device_gate_shown', { reason: block })
+  }, [block])
 
   useEffect(() => {
     if (block !== 'landscape') return

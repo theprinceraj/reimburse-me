@@ -5,12 +5,14 @@ import { useToast } from '../components/Toast'
 import { Field, GhostButton, inputClass, PrimaryButton, Rupee, Sheet, TONE_CLASSES, cx } from '../components/ui'
 import { db, deleteExpense, newId, type Receipt, TONES, upsertBilledTo } from '../db'
 import { useBilledTo, useNatures, useObjectUrl } from '../hooks'
+import { overlayView, refreshUserProps, scrubText, track, trackError } from '../lib/analytics'
 import { formatDate, groupAmountInput, parseAmount, sanitizeAmountInput, toIso, todayIso } from '../lib/format'
 import { compressImage } from '../lib/images'
 import { isPdf, MAX_PDF_PAGES, rasterizePdf } from '../lib/pdfReceipt'
 import { ReceiptViewer } from './ReceiptViewer'
 
-type DraftReceipt = Pick<Receipt, 'id' | 'blob' | 'width' | 'height'> & { isNew: boolean }
+/** `kind` is what the user picked (a PDF is stored as page images); only known for receipts added this time. */
+type DraftReceipt = Pick<Receipt, 'id' | 'blob' | 'width' | 'height'> & { isNew: boolean; kind?: 'image' | 'pdf' }
 
 interface Draft {
   amount: string
@@ -59,6 +61,7 @@ export function ExpenseSheet({ editing, onClose }: { editing: string | null | un
       return
     }
     let stale = false
+    const leave = overlayView(isEdit ? 'expense/edit' : 'expense/new')
     setErrors({})
     setAddingNature(false)
     setViewing(null)
@@ -76,6 +79,7 @@ export function ExpenseSheet({ editing, onClose }: { editing: string | null | un
         })
       return () => {
         stale = true
+        leave()
       }
     }
     Promise.all([db.expenses.get(editing), db.receipts.where('expenseId').equals(editing).sortBy('createdAt')]).then(([e, rs]) => {
@@ -97,6 +101,7 @@ export function ExpenseSheet({ editing, onClose }: { editing: string | null | un
     })
     return () => {
       stale = true
+      leave()
     }
   }, [open, editing]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -118,14 +123,18 @@ export function ExpenseSheet({ editing, onClose }: { editing: string | null | un
           if (isPdf(f)) {
             const { pages, totalPages } = await rasterizePdf(f)
             if (totalPages > MAX_PDF_PAGES) truncated = true
-            for (const p of pages) added.push({ id: newId(), ...p, isNew: true })
+            for (const p of pages) added.push({ id: newId(), ...p, isNew: true, kind: 'pdf' })
+            track('receipt_attach', { type: 'pdf', size_kb: Math.round(f.size / 1024), page_count: pages.length, truncated: totalPages > MAX_PDF_PAGES })
           } else if (f.type.startsWith('image/')) {
-            added.push({ id: newId(), ...(await compressImage(f)), isNew: true })
+            added.push({ id: newId(), ...(await compressImage(f)), isNew: true, kind: 'image' })
+            track('receipt_attach', { type: 'image', size_kb: Math.round(f.size / 1024) })
           } else {
             failed++
+            track('receipt_error', { stage: 'pick', reason: 'unsupported_type' })
           }
-        } catch {
+        } catch (err) {
           failed++
+          track('receipt_error', { stage: isPdf(f) ? 'pdf' : 'image', reason: scrubText((err as Error)?.name || 'unknown') })
         }
       }
       setDraft((d) => ({ ...d, receipts: [...d.receipts, ...added] }))
@@ -146,8 +155,10 @@ export function ExpenseSheet({ editing, onClose }: { editing: string | null | un
     } else {
       const id = newId()
       const order = natures.list.length
-      await db.natures.add({ id, name, emoji: '🏷️', tone: TONES[order % TONES.length] ?? 'slate', builtIn: false, order })
+      const tone = TONES[order % TONES.length] ?? 'slate'
+      await db.natures.add({ id, name, emoji: '🏷️', tone, builtIn: false, order })
       set('natureId', id)
+      track('nature_create', { nature_name: scrubText(name), tone, surface: 'expense_sheet' })
     }
     setNewNature('')
     setAddingNature(false)
@@ -166,8 +177,11 @@ export function ExpenseSheet({ editing, onClose }: { editing: string | null | un
       return
     }
     setBusy(true)
+    const billedName = typedBilled.replace(/\s+/g, ' ')
+    const isNewBilled = addingBilled && !billedTo.list.some((b) => b.name.toLowerCase() === billedName.toLowerCase())
+    let billedToId = draft.billedToId as string
     try {
-      const billedToId = addingBilled ? await upsertBilledTo(typedBilled) : (draft.billedToId as string)
+      if (addingBilled) billedToId = await upsertBilledTo(typedBilled)
       if (!addingBilled) await db.billedTo.update(billedToId, { lastUsedAt: Date.now() })
       const now = Date.now()
       const id = isEdit ? editing : newId()
@@ -195,13 +209,55 @@ export function ExpenseSheet({ editing, onClose }: { editing: string | null | un
       toast(isEdit ? 'Expense updated' : 'Expense added')
     } catch (err) {
       console.error(err)
+      trackError(err, 'expense_save')
       toast(
         (err as DOMException)?.name === 'QuotaExceededError'
           ? 'Phone storage is full. Free up space or remove some photos.'
           : "Couldn't save. Please try again.",
       )
+      return
     } finally {
       setBusy(false)
+    }
+    // Saved: an analytics failure past this point must not report the save as failed.
+    try {
+      if (isNewBilled) track('billed_to_create', { billed_to: scrubText(billedName), surface: 'expense_sheet' })
+      if (isEdit) {
+        const before = JSON.parse(initial.current) as Draft
+        const ids = (rs: DraftReceipt[]) => rs.map((r) => r.id).join()
+        const changed = [
+          parseAmount(before.amount) !== amountPaise && 'amount',
+          before.date !== draft.date && 'date',
+          before.natureId !== draft.natureId && 'nature',
+          before.remarks.trim() !== draft.remarks.trim() && 'remarks',
+          before.billedToId !== billedToId && 'billed_to',
+          ids(before.receipts) !== ids(draft.receipts) && 'receipts',
+        ].filter(Boolean)
+        track('expense_edit', { fields_changed: changed.join(',') || 'none', receipt_count: draft.receipts.length })
+      } else {
+        const nature = draft.natureId ? natures.map.get(draft.natureId) : undefined
+        const remarks = scrubText(draft.remarks)
+        const kinds = new Set(draft.receipts.map((r) => r.kind ?? 'image'))
+        const offsetDays = Math.round((Date.parse(todayIso()) - Date.parse(draft.date)) / 86_400_000)
+        // GA4 key event candidate.
+        track('expense_add', {
+          value: amountPaise / 100,
+          currency: 'INR',
+          nature_id: nature ? (nature.builtIn ? nature.id : 'custom') : 'none',
+          nature_name: nature ? scrubText(nature.name) : 'none',
+          nature_is_custom: nature ? !nature.builtIn : false,
+          billed_to: scrubText(addingBilled ? billedName : (billedTo.map.get(billedToId)?.name ?? '')),
+          remarks: remarks || undefined,
+          has_remarks: !!remarks,
+          receipt_count: draft.receipts.length,
+          receipt_types: kinds.size === 0 ? 'none' : kinds.size > 1 ? 'mixed' : [...kinds][0],
+          expense_date_offset_days: offsetDays,
+          is_backdated: offsetDays > 0,
+        })
+      }
+      refreshUserProps()
+    } catch (err) {
+      trackError(err, 'analytics')
     }
   }
 
@@ -210,6 +266,8 @@ export function ExpenseSheet({ editing, onClose }: { editing: string | null | un
     const [e, rs] = await Promise.all([db.expenses.get(editing), db.receipts.where('expenseId').equals(editing).toArray()])
     await deleteExpense(editing)
     onClose()
+    track('expense_delete', { receipt_count: rs.length })
+    refreshUserProps()
     if (e)
       toast('Expense deleted', {
         label: 'Undo',
@@ -218,6 +276,10 @@ export function ExpenseSheet({ editing, onClose }: { editing: string | null | un
             .transaction('rw', db.expenses, db.receipts, async () => {
               await db.expenses.add(e)
               await db.receipts.bulkAdd(rs)
+            })
+            .then(() => {
+              track('expense_delete_undo', { receipt_count: rs.length })
+              refreshUserProps()
             })
             .catch(() => toast("Couldn't restore the expense.")),
       })
@@ -436,7 +498,15 @@ export function ExpenseSheet({ editing, onClose }: { editing: string | null | un
           <Field label="Receipts" optional>
             <div className="grid grid-cols-4 gap-2">
               {draft.receipts.map((r, i) => (
-                <Thumb key={r.id} blob={r.blob} onOpen={() => setViewing(i)} onRemove={() => set('receipts', draft.receipts.filter((x) => x.id !== r.id))} />
+                <Thumb
+                  key={r.id}
+                  blob={r.blob}
+                  onOpen={() => setViewing(i)}
+                  onRemove={() => {
+                    set('receipts', draft.receipts.filter((x) => x.id !== r.id))
+                    track('receipt_remove', { surface: 'thumbnail' })
+                  }}
+                />
               ))}
               <button
                 type="button"
@@ -460,6 +530,7 @@ export function ExpenseSheet({ editing, onClose }: { editing: string | null | un
           onDelete={(i) => {
             setDraft((d) => ({ ...d, receipts: d.receipts.filter((_, j) => j !== i) }))
             setViewing(null)
+            track('receipt_remove', { surface: 'viewer' })
           }}
         />
       )}

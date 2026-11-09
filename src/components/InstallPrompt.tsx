@@ -1,6 +1,7 @@
 import { Download, EllipsisVertical, Share, SquarePlus } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 import { isStandalone, useInstallPrompt } from '../hooks'
+import { track } from '../lib/analytics'
 import { GhostButton, PrimaryButton, Sheet } from './ui'
 
 const SEEN_KEY = 'install-prompt-shown'
@@ -35,6 +36,7 @@ export function InstallPrompt({ suppressed }: { suppressed: boolean }) {
       /* private mode: still show once for this page load */
     }
     setOpen(true)
+    track('install_prompt_shown', { surface: 'sheet', install_method: platform })
   }, [ready, canInstall, suppressed])
 
   return (
@@ -73,7 +75,8 @@ export function InstallPrompt({ suppressed }: { suppressed: boolean }) {
           <PrimaryButton
             icon={<Download size={20} />}
             onClick={async () => {
-              await install()
+              const accepted = await install()
+              track('install_prompt_result', { outcome: accepted ? 'accepted' : 'dismissed', surface: 'sheet' })
               setOpen(false)
             }}
           >

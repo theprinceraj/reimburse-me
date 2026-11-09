@@ -1,16 +1,23 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { Building2, Check, Download, HardDrive, Pencil, Plus, RotateCcw, Smartphone, Tag as TagIcon, Trash2, Upload, User, X } from 'lucide-react'
+import { Building2, Check, ChevronRight, Download, HardDrive, Pencil, Plus, RotateCcw, ShieldCheck, Smartphone, Tag as TagIcon, Trash2, Upload, User, X } from 'lucide-react'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { useToast } from '../components/Toast'
-import { Card, Field, IconButton, Inset, PaperButton, PrimaryButton, SectionLabel, TONE_CLASSES, cx, inputClass } from '../components/ui'
+import { Card, Field, IconButton, Inset, PaperButton, PrimaryButton, SectionLabel, Sheet, TONE_CLASSES, cx, inputClass } from '../components/ui'
 import { db, newId, PRESET_NATURES, requestPersistence, setSetting, TONES, wipeAllData } from '../db'
 import { isStandalone, useBilledTo, useInstallPrompt, useNatures, useProfile } from '../hooks'
+import { isAnalyticsConfigured, overlayView, refreshUserProps, scrubText, setAnalyticsEnabled, track, trackNow, useAnalyticsEnabled } from '../lib/analytics'
 import { exportBackup, importBackup } from '../lib/backup'
 import type { Profile } from '../lib/claim'
 import { todayIso } from '../lib/format'
 import { download } from '../lib/share'
+import { Switch } from './ClaimScreen'
+
+/** The Settings install card reports being shown once per app session. */
+let installCardShown = false
 
 export function SettingsScreen() {
+  const [privacyOpen, setPrivacyOpen] = useState(false)
+  const sharing = useAnalyticsEnabled() && isAnalyticsConfigured()
   return (
     <div className="flex flex-col gap-6 px-4 pt-[max(20px,env(safe-area-inset-top))]">
       <header className="pt-2">
@@ -21,11 +28,22 @@ export function SettingsScreen() {
       <BilledToSection />
       <NatureSection />
       <DataSection />
+      {isAnalyticsConfigured() && <PrivacySection onOpenPrivacy={() => setPrivacyOpen(true)} />}
       <p className="pb-4 text-center t-body-sm text-tertiary">
         Reimburse Me · v{__APP_VERSION__}
         <br />
-        Your data stays on this phone. Nothing is uploaded.
+        Expenses and receipts are stored on this phone.{' '}
+        {sharing ? 'Usage and expense details are shared with Google Analytics to improve the app.' : 'Usage analytics is off.'}
+        {isAnalyticsConfigured() && (
+          <>
+            {' '}
+            <button type="button" className="font-medium text-primary underline underline-offset-2" onClick={() => setPrivacyOpen(true)}>
+              Privacy
+            </button>
+          </>
+        )}
       </p>
+      <PrivacySheet open={privacyOpen} onClose={() => setPrivacyOpen(false)} />
     </div>
   )
 }
@@ -46,7 +64,17 @@ function Section({ icon, title, children, hint }: { icon: ReactNode; title: stri
 function InstallCard() {
   const { canInstall, install } = useInstallPrompt()
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent)
-  if (isStandalone() || !window.isSecureContext) return null
+  const visible = !isStandalone() && window.isSecureContext
+  // Wait a moment so a late `beforeinstallprompt` still reports the right method.
+  useEffect(() => {
+    if (!visible || installCardShown) return
+    const t = setTimeout(() => {
+      installCardShown = true
+      track('install_prompt_shown', { surface: 'settings', install_method: canInstall ? 'native' : ios ? 'ios' : 'manual' })
+    }, 1500)
+    return () => clearTimeout(t)
+  }, [visible, canInstall, ios])
+  if (!visible) return null
   return (
     <Card className="flex items-center gap-3 p-4">
       <div className="flex size-11 shrink-0 items-center justify-center rounded-field bg-accent-soft text-primary">
@@ -57,7 +85,13 @@ function InstallCard() {
         <span className="t-body-sm text-secondary">{canInstall ? 'Opens like an app and works offline.' : ios ? 'In Safari, tap Share, then "Add to Home Screen".' : 'Open the browser menu, then "Install app" or "Add to Home screen".'}</span>
       </div>
       {canInstall && (
-        <PrimaryButton compact onClick={install}>
+        <PrimaryButton
+          compact
+          onClick={async () => {
+            const accepted = await install()
+            track('install_prompt_result', { outcome: accepted ? 'accepted' : 'dismissed', surface: 'settings' })
+          }}
+        >
           Install
         </PrimaryButton>
       )}
@@ -214,6 +248,7 @@ function BilledToSection() {
     if (!v) return setAdding(false)
     if (list.some((b) => b.name.toLowerCase() === v.toLowerCase())) return toast(`"${v}" is already in the list`)
     await db.billedTo.add({ id: newId(), name: v, createdAt: Date.now(), lastUsedAt: 0 })
+    track('billed_to_create', { billed_to: scrubText(v), surface: 'settings' })
     setName('')
     setAdding(false)
   }
@@ -233,8 +268,9 @@ function BilledToSection() {
                 onRename={async (v) => {
                   if (list.some((x) => x.id !== b.id && x.name.toLowerCase() === v.toLowerCase())) return 'That name is already in the list'
                   await db.billedTo.update(b.id, { name: v })
+                  track('billed_to_rename')
                 }}
-                onDelete={counts === undefined || n ? undefined : () => db.billedTo.delete(b.id)}
+                onDelete={counts === undefined || n ? undefined : () => db.billedTo.delete(b.id).then(() => track('billed_to_delete'))}
               />
             )
           })}
@@ -279,13 +315,16 @@ function NatureSection() {
   async function restorePresets() {
     await db.natures.bulkAdd(missingPresets.map((p, i) => ({ ...p, order: list.length + i })))
     toast('Built-in natures restored')
+    track('nature_reset', { restored_count: missingPresets.length })
   }
 
   async function add() {
     const v = name.trim()
     if (!v) return
     if (list.some((n) => n.name.toLowerCase() === v.toLowerCase())) return toast(`"${v}" already exists`)
-    await db.natures.add({ id: newId(), name: v, emoji, tone: TONES[list.length % TONES.length] ?? 'slate', builtIn: false, order: list.length })
+    const tone = TONES[list.length % TONES.length] ?? 'slate'
+    await db.natures.add({ id: newId(), name: v, emoji, tone, builtIn: false, order: list.length })
+    track('nature_create', { nature_name: scrubText(v), tone, surface: 'settings' })
     setName('')
     setEmoji('🏷️')
     setAdding(false)
@@ -298,6 +337,7 @@ function NatureSection() {
       })
       await db.natures.delete(id)
     })
+    track('nature_delete', { nature_is_custom: !presetIds.has(id) })
   }
 
   return (
@@ -313,6 +353,7 @@ function NatureSection() {
               onRename={async (v) => {
                 if (list.some((x) => x.id !== n.id && x.name.toLowerCase() === v.toLowerCase())) return 'That name already exists'
                 await db.natures.update(n.id, { name: v })
+                track('nature_edit', { nature_is_custom: !presetIds.has(n.id) })
               }}
               onDelete={() => remove(n.id)}
             />
@@ -385,6 +426,8 @@ function DataSection() {
               onClick={async () => {
                 const ok = await requestPersistence()
                 setPersisted(ok)
+                track('storage_persist_request', { granted: ok })
+                refreshUserProps()
                 toast(ok ? 'Storage protected' : isStandalone() ? 'Your browser declined. Keep regular backups.' : 'Install the app first, then try again.')
               }}
             >
@@ -393,15 +436,17 @@ function DataSection() {
           </Inset>
         )}
         <Inset>
-          <p className="t-body-sm text-secondary">Everything is stored only on this phone. Make a backup now and then, especially before changing phones or clearing browser data.</p>
+          <p className="t-body-sm text-secondary">Expenses and receipts are kept only on this phone, with no cloud copy. Make a backup now and then, especially before changing phones or clearing browser data.</p>
         </Inset>
         <div className="grid grid-cols-2 gap-2">
           <PaperButton
             icon={<Download size={17} />}
             onClick={async () => {
               try {
-                download(await exportBackup(), `reimburse-me-backup-${todayIso()}.json`)
+                const blob = await exportBackup()
+                download(blob, `reimburse-me-backup-${todayIso()}.json`)
                 toast('Backup saved to downloads')
+                track('backup_export', { expense_count: count ?? 0, receipt_count: await db.receipts.count(), size_kb: Math.round(blob.size / 1024) })
               } catch {
                 toast("Couldn't create the backup. Please try again.")
               }
@@ -437,8 +482,11 @@ function DataSection() {
                   try {
                     const n = await importBackup(pendingRestore)
                     toast(`Restored ${n} expense${n === 1 ? '' : 's'}`)
+                    track('backup_restore', { success: true, expense_count: n })
+                    refreshUserProps()
                   } catch (err) {
                     toast((err as Error).message)
+                    track('backup_restore', { success: false, reason: scrubText((err as Error).message) })
                   }
                   setPendingRestore(undefined)
                 }}
@@ -461,6 +509,7 @@ function DataSection() {
                 onClick={async () => {
                   try {
                     await wipeAllData()
+                    await trackNow('data_delete_all', { expense_count: count ?? 0 })
                     location.reload()
                   } catch {
                     toast("Couldn't delete your data. Close other tabs of this app and try again.")
@@ -478,5 +527,53 @@ function DataSection() {
         </div>
       </Card>
     </Section>
+  )
+}
+
+function PrivacySection({ onOpenPrivacy }: { onOpenPrivacy: () => void }) {
+  const on = useAnalyticsEnabled()
+  return (
+    <Section icon={<ShieldCheck size={16} />} title="Privacy">
+      <Card className="px-4 py-1">
+        <label className="flex min-h-16 items-center gap-3 py-3">
+          <span className="flex flex-1 flex-col gap-0.5">
+            <span className="t-body-md font-medium">Share usage analytics</span>
+            <span className="t-body-sm text-secondary">
+              Sends what you do in the app to Google Analytics: amounts, natures, companies and remarks (with personal info removed), plus your device and
+              approximate location. Receipts and your profile are never sent.
+            </span>
+          </span>
+          <Switch checked={on} onChange={setAnalyticsEnabled} />
+        </label>
+        <button type="button" onClick={onOpenPrivacy} className="flex min-h-12 w-full items-center justify-between border-t border-hairline t-button-sm text-primary">
+          What's shared and what isn't <ChevronRight size={16} />
+        </button>
+      </Card>
+    </Section>
+  )
+}
+
+function PrivacySheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  useEffect(() => {
+    if (open) return overlayView('privacy')
+  }, [open])
+  const item = (title: string, body: string) => (
+    <div className="flex flex-col gap-1">
+      <h3 className="t-title-md text-ink">{title}</h3>
+      <p className="t-body-md text-secondary">{body}</p>
+    </div>
+  )
+  return (
+    <Sheet open={open} onClose={onClose} title="Privacy">
+      <div className="flex flex-col gap-5 pt-1 pb-[max(8px,env(safe-area-inset-bottom))]">
+        {item('Stored on this phone', "Your expenses, receipts and profile are kept in this browser's storage. There's no account and no cloud copy, so keep backups.")}
+        {item(
+          'Shared with Google Analytics',
+          'While usage analytics is on, the app sends the screens you open and the actions you take, including expense amounts, nature of expense, the company billed and remarks. Emails, phone numbers, PAN, Aadhaar, UPI IDs, links and long numbers are removed from text first. Google also receives your device, browser and approximate location (from your IP address), and may use this data for advertising measurement.',
+        )}
+        {item('Never sent', 'Receipt photos and PDFs, file names, and your name, employee ID, department and email.')}
+        {item('Your choice', 'Turn off "Share usage analytics" in Settings at any time. Nothing more is sent, and events waiting to go out while offline are deleted.')}
+      </div>
+    </Sheet>
   )
 }

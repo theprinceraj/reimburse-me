@@ -5,6 +5,7 @@ import { useToast } from '../components/Toast'
 import { Card, EmptyAction, EmptyState, FilterPill, IconButton, PaperButton, Perforation, PrimaryButton, Rupee, SectionLabel, cx, inputClass } from '../components/ui'
 import { db } from '../db'
 import { useBilledTo, useNatures, useProfile } from '../hooks'
+import { type Params, scrubText, track } from '../lib/analytics'
 import { buildCsv, type ClaimInput } from '../lib/claim'
 import { formatAmount, formatDate, monthRange, todayIso } from '../lib/format'
 import { canShareFile, download, shareFile, slug } from '../lib/share'
@@ -21,7 +22,7 @@ export function ClaimScreen({ onAddExpense, onOpenSettings }: { onAddExpense: ()
   const [custom, setCustom] = useState(() => ({ ...monthRange(0), to: todayIso() }))
   const [withReceipts, setWithReceipts] = useState(true)
   const [busy, setBusy] = useState<'pdf' | 'csv' | null>(null)
-  const [ready, setReady] = useState<{ blob: Blob; name: string; kind: 'pdf' | 'csv' } | null>(null)
+  const [ready, setReady] = useState<{ blob: Blob; name: string; kind: 'pdf' | 'csv'; params: Params; exported?: boolean } | null>(null)
 
   const all = useLiveQuery(() => db.expenses.orderBy('date').toArray(), [])
   const receiptIds = useLiveQuery(async () => (await db.receipts.orderBy('expenseId').keys()) as string[], [])
@@ -57,21 +58,46 @@ export function ClaimScreen({ onAddExpense, onOpenSettings }: { onAddExpense: ()
 
   async function exportAs(kind: 'pdf' | 'csv') {
     setBusy(kind)
+    const startedAt = performance.now()
     try {
       const blob = kind === 'csv' ? await buildCsv(input) : await (await import('../lib/pdf')).buildPdf(input, { includeReceipts: withReceipts })
       const name = `${fileBase}.${kind}`
+      // GA4 key event candidate (claim_export), sent once the file is shared or saved.
+      const params: Params = {
+        format: kind,
+        period_type: period,
+        period_label: `${range.from} to ${range.to}`,
+        billed_to: who ? scrubText(input.billedToLabel) : 'everyone',
+        expense_count: items.length,
+        value: total / 100,
+        currency: 'INR',
+        include_receipts: kind === 'pdf' ? withReceipts && receiptCount > 0 : undefined,
+        receipt_count: receiptCount,
+        duration_ms: Math.round(performance.now() - startedAt),
+      }
       // Sharing needs a fresh tap: building the PDF takes long enough for the original tap to expire.
-      if (canShareFile(blob, name)) setReady({ blob, name, kind })
+      if (canShareFile(blob, name)) setReady({ blob, name, kind, params })
       else {
         download(blob, name)
         toast(`${kind.toUpperCase()} saved to downloads`)
+        track('claim_export', { ...params, method: 'download' })
       }
     } catch (e) {
       console.error(e)
+      track('claim_export_error', { format: kind, reason: scrubText((e as Error)?.message || String(e)) })
       toast(`Couldn't create the ${kind.toUpperCase()}. Please try again.`)
     } finally {
       setBusy(null)
     }
+  }
+
+  /** The key event (with its value) counts once per built claim; sharing or saving it again is a plain action. */
+  const reportExport = (method: 'share' | 'download') => {
+    if (!ready) return
+    if (ready.exported) return track('claim_export_action', { format: ready.kind, method })
+    // Set on the object itself, so a Save tapped while a Share is still open sees it too.
+    ready.exported = true
+    track('claim_export', { ...ready.params, method })
   }
 
   // A prepared file goes stale as soon as the selection changes.
@@ -240,11 +266,18 @@ export function ClaimScreen({ onAddExpense, onOpenSettings }: { onAddExpense: ()
                       download(ready.blob, ready.name)
                       toast('Saved to downloads instead')
                     }
+                    if (how !== 'cancelled') reportExport(how === 'shared' ? 'share' : 'download')
                   }}
                 >
                   Share
                 </PrimaryButton>
-                <PaperButton icon={<Download size={17} />} onClick={() => download(ready.blob, ready.name)}>
+                <PaperButton
+                  icon={<Download size={17} />}
+                  onClick={() => {
+                    download(ready.blob, ready.name)
+                    reportExport('download')
+                  }}
+                >
                   Save
                 </PaperButton>
               </div>

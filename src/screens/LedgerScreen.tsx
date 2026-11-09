@@ -1,10 +1,14 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { ChevronLeft, ChevronRight, Paperclip, ReceiptText, Search, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Card, Dot, EmptyAction, EmptyState, FilterPill, IconButton, inputClass, Rupee, SectionLabel, Tag, TONE_CLASSES, cx } from '../components/ui'
 import { db, type Expense } from '../db'
 import { useBilledTo, useNatures } from '../hooks'
+import { scrubText, track } from '../lib/analytics'
 import { dayHeading, formatAmount, formatMonth, monthRange } from '../lib/format'
+
+/** How long typing must pause before a search is reported. */
+const SEARCH_REPORT_DELAY_MS = 1500
 
 export function LedgerScreen({ onOpen, onAdd }: { onOpen: (id: string) => void; onAdd: () => void }) {
   const [monthOffset, setMonthOffset] = useState(0)
@@ -34,6 +38,24 @@ export function LedgerScreen({ onOpen, onAdd }: { onOpen: (id: string) => void; 
       return e.date >= from && e.date <= to
     })
   }, [all, billedFilter, q, from, to, natures.map, billedTo.map])
+
+  // Report a search once the user stops typing, not on every keystroke.
+  const resultCount = visible.length
+  useEffect(() => {
+    if (!q) return
+    const t = setTimeout(() => track('search', { search_term: scrubText(q), results_count: resultCount }), SEARCH_REPORT_DELAY_MS)
+    return () => clearTimeout(t)
+  }, [q, resultCount])
+
+  const changeMonth = (direction: 'prev' | 'next' | 'current') => {
+    setMonthOffset((m) => (direction === 'prev' ? m - 1 : direction === 'next' ? m + 1 : 0))
+    track('month_change', { direction })
+  }
+
+  const filterBilled = (id: string | null) => {
+    setBilledFilter(id)
+    if (id) track('filter_company', { billed_to: scrubText(billedTo.map.get(id)?.name ?? '') })
+  }
 
   const monthTotal = visible.reduce((s, e) => s + e.amountPaise, 0)
   const groups = useMemo(() => {
@@ -89,10 +111,10 @@ export function LedgerScreen({ onOpen, onAdd }: { onOpen: (id: string) => void; 
           <div className="flex items-center justify-between">
             <SectionLabel>{billedFilter ? `${billedTo.map.get(billedFilter)?.name} · ` : ''}Spent in {formatMonth(monthDate)}</SectionLabel>
             <div className="-my-2 -mr-2 flex">
-              <IconButton label="Previous month" onClick={() => setMonthOffset((m) => m - 1)} className="text-secondary">
+              <IconButton label="Previous month" onClick={() => changeMonth('prev')} className="text-secondary">
                 <ChevronLeft size={20} />
               </IconButton>
-              <IconButton label="Next month" disabled={monthOffset >= 0} onClick={() => setMonthOffset((m) => m + 1)} className="text-secondary disabled:opacity-30">
+              <IconButton label="Next month" disabled={monthOffset >= 0} onClick={() => changeMonth('next')} className="text-secondary disabled:opacity-30">
                 <ChevronRight size={20} />
               </IconButton>
             </div>
@@ -106,7 +128,7 @@ export function LedgerScreen({ onOpen, onAdd }: { onOpen: (id: string) => void; 
             {monthOffset !== 0 && (
               <>
                 {' · '}
-                <button type="button" className="font-medium text-primary" onClick={() => setMonthOffset(0)}>
+                <button type="button" className="font-medium text-primary" onClick={() => changeMonth('current')}>
                   Back to this month
                 </button>
               </>
@@ -135,11 +157,11 @@ export function LedgerScreen({ onOpen, onAdd }: { onOpen: (id: string) => void; 
 
       {billedTo.list.length > 1 && (
         <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
-          <FilterPill selected={billedFilter === null} onClick={() => setBilledFilter(null)}>
+          <FilterPill selected={billedFilter === null} onClick={() => filterBilled(null)}>
             All
           </FilterPill>
           {billedTo.list.map((b) => (
-            <FilterPill key={b.id} selected={billedFilter === b.id} onClick={() => setBilledFilter(billedFilter === b.id ? null : b.id)}>
+            <FilterPill key={b.id} selected={billedFilter === b.id} onClick={() => filterBilled(billedFilter === b.id ? null : b.id)}>
               {b.name}
             </FilterPill>
           ))}
@@ -183,7 +205,7 @@ export function LedgerScreen({ onOpen, onAdd }: { onOpen: (id: string) => void; 
                   </EmptyAction>
                 )}
                 {billedFilter && <EmptyAction onClick={() => setBilledFilter(null)}>Show all companies</EmptyAction>}
-                {!q && monthOffset !== 0 && <EmptyAction onClick={() => setMonthOffset(0)}>Go to this month</EmptyAction>}
+                {!q && monthOffset !== 0 && <EmptyAction onClick={() => changeMonth('current')}>Go to this month</EmptyAction>}
                 {!q && !billedFilter && monthOffset === 0 && <EmptyAction onClick={onAdd}>Add an expense</EmptyAction>}
               </div>
             }

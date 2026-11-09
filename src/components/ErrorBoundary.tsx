@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react'
+import { trackError } from '../lib/analytics'
 import { exportBackup } from '../lib/backup'
 import { download } from '../lib/share'
 
@@ -12,6 +13,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
 
   componentDidCatch(error: Error) {
     console.error(error)
+    trackError(error, 'error_boundary', true)
   }
 
   render() {
