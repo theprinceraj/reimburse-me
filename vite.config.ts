@@ -48,7 +48,9 @@ export default defineConfig(({ command }) => ({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,ttf,webmanifest}'],
+        globPatterns: ['**/*.{js,mjs,css,html,svg,png,ico,woff2,ttf,webmanifest}'],
+        // pdf.js worker (~1.3 MB) must be precached so PDF receipts work offline.
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         navigateFallback: '/index.html',
         cleanupOutdatedCaches: true,
       },

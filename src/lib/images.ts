@@ -5,7 +5,7 @@ const QUALITY = 0.82
  * Shrinks a camera photo to at most 1600px on its long edge and re-encodes it as JPEG, so a
  * dozen receipts fit comfortably in browser storage and in the claim PDF.
  */
-export async function compressImage(file: File): Promise<{ blob: Blob; width: number; height: number }> {
+export async function compressImage(file: File): Promise<EncodedImage> {
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
   const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height))
   const width = Math.round(bitmap.width * scale)
@@ -19,10 +19,20 @@ export async function compressImage(file: File): Promise<{ blob: Blob; width: nu
   ctx.fillRect(0, 0, width, height)
   ctx.drawImage(bitmap, 0, 0, width, height)
   bitmap.close()
+  return encodeCanvas(canvas)
+}
+
+export interface EncodedImage {
+  blob: Blob
+  width: number
+  height: number
+}
+
+export async function encodeCanvas(canvas: HTMLCanvasElement): Promise<EncodedImage> {
   const blob = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not encode image'))), 'image/jpeg', QUALITY),
   )
-  return { blob, width, height }
+  return { blob, width: canvas.width, height: canvas.height }
 }
 
 export function blobToDataUrl(blob: Blob): Promise<string> {

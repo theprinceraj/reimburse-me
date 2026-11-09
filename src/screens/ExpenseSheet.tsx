@@ -7,6 +7,7 @@ import { db, deleteExpense, newId, type Receipt, TONES, upsertBilledTo } from '.
 import { useBilledTo, useNatures, useObjectUrl } from '../hooks'
 import { formatDate, groupAmountInput, parseAmount, sanitizeAmountInput, toIso, todayIso } from '../lib/format'
 import { compressImage } from '../lib/images'
+import { isPdf, MAX_PDF_PAGES, rasterizePdf } from '../lib/pdfReceipt'
 import { ReceiptViewer } from './ReceiptViewer'
 
 type DraftReceipt = Pick<Receipt, 'id' | 'blob' | 'width' | 'height'> & { isNew: boolean }
@@ -110,14 +111,26 @@ export function ExpenseSheet({ editing, onClose }: { editing: string | null | un
     setBusy(true)
     try {
       const added: DraftReceipt[] = []
+      let failed = 0
+      let truncated = false
       for (const f of Array.from(files)) {
-        if (!f.type.startsWith('image/')) continue
-        const { blob, width, height } = await compressImage(f)
-        added.push({ id: newId(), blob, width, height, isNew: true })
+        try {
+          if (isPdf(f)) {
+            const { pages, totalPages } = await rasterizePdf(f)
+            if (totalPages > MAX_PDF_PAGES) truncated = true
+            for (const p of pages) added.push({ id: newId(), ...p, isNew: true })
+          } else if (f.type.startsWith('image/')) {
+            added.push({ id: newId(), ...(await compressImage(f)), isNew: true })
+          } else {
+            failed++
+          }
+        } catch {
+          failed++
+        }
       }
       setDraft((d) => ({ ...d, receipts: [...d.receipts, ...added] }))
-    } catch {
-      toast("Couldn't read that photo. Try another one.")
+      if (failed) toast(`Couldn't read ${failed === 1 ? 'that file' : `${failed} files`}. Try a photo or an unlocked PDF.`)
+      else if (truncated) toast(`Added the first ${MAX_PDF_PAGES} pages of the PDF.`)
     } finally {
       setBusy(false)
       if (fileRef.current) fileRef.current.value = ''
@@ -435,7 +448,7 @@ export function ExpenseSheet({ editing, onClose }: { editing: string | null | un
                 <span className="t-body-sm">{busy ? 'Adding…' : 'Add'}</span>
               </button>
             </div>
-            <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => addFiles(e.target.files)} />
+            <input ref={fileRef} type="file" accept="image/*,application/pdf,.pdf" multiple hidden onChange={(e) => addFiles(e.target.files)} />
           </Field>
         </form>
       </Sheet>

@@ -198,9 +198,9 @@ export function ClaimScreen({ onAddExpense, onOpenSettings }: { onAddExpense: ()
           <label className="flex min-h-14 items-center gap-3 rounded-card border border-hairline bg-paper px-4">
             <Paperclip size={18} className="text-secondary" />
             <span className="flex flex-1 flex-col">
-              <span className="t-body-md font-medium">Attach receipt photos</span>
+              <span className="t-body-md font-medium">Attach receipts</span>
               <span className="t-body-sm text-secondary">
-                {receiptCount ? `${receiptCount} photo${receiptCount === 1 ? '' : 's'} added to the PDF` : 'No photos in this claim'}
+                {receiptCount ? `${receiptCount} receipt page${receiptCount === 1 ? '' : 's'} added to the PDF` : 'No receipts in this claim'}
               </span>
             </span>
             <Switch checked={withReceipts && receiptCount > 0} disabled={!receiptCount} onChange={setWithReceipts} />
