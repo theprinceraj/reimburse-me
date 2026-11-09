@@ -45,24 +45,16 @@ analytics into a no-op: no script, no events, no notice. In dev (`import.meta.en
 only for a production build served from `reimburse-me.theprinceraj.in`. Dev servers, `*.pages.dev` previews, LAN IPs
 and `vite preview` get `dev`, so filter reports on `app_env = prod`.
 
-- Consent Mode v2 defaults are `granted` for `analytics_storage`, `ad_storage`, `ad_user_data` and
-  `ad_personalization`, or `denied` after an opt-out. `allow_google_signals: true`. Automatic page views are off;
+- Analytics is always on and can't be turned off; the notice and the Privacy section tell people who don't want to
+  share usage data to stop using the app. No consent calls are made (gtag's default is granted).
+  `allow_google_signals: true`. Automatic page views are off;
   screens send virtual `page_view`s (`/expenses`, `/claim`, `/settings`, `/expense/new`, `/expense/edit`,
   `/receipt`, `/privacy`). Only campaign parameters (`utm_source|medium|campaign|term|content|id`, `gclid`) from the
   launch query reach GA, on the config and the first page view; other query parameters never leave the phone. Every
   event carries `page_location`/`page_path`/`page_title` of the screen it happened on (topmost sheet or viewer, else
   the tab), so closing a sheet restores the tab's context without an extra page view, and replayed events keep theirs.
-- **Opt-out** (Settings → Privacy → "Share usage analytics", on by default): sends `analytics_opt_out` first, then
-  sets consent to denied, sets `window['ga-disable-<ID>']`, and deletes the offline queue. Toggles are applied in
-  order and superseded ones are skipped. The choice lives in the
-  `settings` table (`analytics_enabled`), cached in `localStorage` so it can be read synchronously at boot. When that
-  cache is missing, gtag.js isn't loaded until the stored choice has been read.
-  **Limitation:** `analytics_opt_out` is only sent when it can go out at once (gtag.js loaded, online, no replay
-  running); otherwise it is skipped, since a queued copy would be deleted with the queue.
-- A one-time banner above the bottom nav says analytics is used ("OK" / "Settings"); dismissal is stored as
-  `analytics_notice_dismissed`; it isn't shown while analytics is off. Until the stored choice has been read at boot,
-  events wait in the queue, so a cleared
-  `localStorage` can't leak events from someone who opted out.
+- A one-time banner above the bottom nav says usage data is shared and to stop using the app if that's not OK
+  ("OK" / "Details", which opens Settings); dismissal is stored as `analytics_notice_dismissed`.
 - `analytics_*` settings and the offline queue belong to the device: backups leave them out, restore keeps the
   current ones, and "Delete all data" keeps them.
 
@@ -74,15 +66,14 @@ and `vite preview` get `dev`, so filter reports on `app_env = prod`.
 - Never sent: profile fields (name, employee ID, department, email), receipt images or PDFs, file names.
 
 ### Offline queue
-Every event that can't go to gtag at once (offline, gtag.js still loading or failed, stored opt-out not read yet,
+Every event that can't go to gtag at once (offline, gtag.js still loading or failed,
 older events still waiting) is written straight to the Dexie `analyticsQueue` store (DB version 2) with `queued_at`,
 so closing the tab early can't lose it (`first_launch` is only marked reported once it is queued or sent). The queue
 is replayed in order through gtag on the `online` event, when gtag.js loads, and when the app becomes visible again.
 Events queued while offline or after a failed load get `queued: true` and `offline_delay_sec`; ones that only
 waited for gtag.js to load don't. GA4 timestamps them at replay time. Each batch is deleted before it is
 handed to gtag, so a crash mid-replay can lose events but never sends one twice. The queue keeps the newest 500
-events (checked every 20th write), is excluded from backups, survives "Delete all data", and is cleared by opting
-out. `trackNow`, used right before a reload or delete-all, waits at most 800 ms. The service worker caches `gtag/js` and `gtag/destination`
+events (checked every 20th write), is excluded from backups, and survives "Delete all data". `trackNow`, used right before a reload or delete-all, waits at most 800 ms. The service worker caches `gtag/js` and `gtag/destination`
 (StaleWhileRevalidate, 7 days, 200 responses only; the script is loaded with `crossorigin="anonymous"` so it is a
 CORS response rather than an opaque one) so the script loads offline. Hits to `google-analytics.com/g/collect` are not routed
 through the SW.
@@ -128,7 +119,6 @@ Key event candidates are marked ★.
 | `install_prompt_result` | `outcome` (accepted/dismissed), `surface` | Native install button |
 | `app_installed` ★ | `platform` | `appinstalled` window event |
 | `sw_update_available`, `sw_update_applied`, `sw_update_later` | none | Update banner (`App.tsx`) |
-| `analytics_opt_out`, `analytics_opt_in` | none | Settings toggle (opt-out sent before disabling, only if it can go out at once) |
 | `device_gate_shown` | `reason` (desktop/landscape) | DeviceGate |
 | `exception` | `description`, `fatal`, `context` (error_boundary/window_error/unhandled_rejection/expense_save) | ErrorBoundary, window `error`/`unhandledrejection`; deduped per session |
 | `web_vitals` | `metric_name` (LCP/INP/CLS/FCP/TTFB), `metric_value` (ms; CLS unitless), no `value` so Event value stays expense rupees, `metric_rating`, `metric_id` | `web-vitals` |

@@ -1,12 +1,11 @@
-import { useSyncExternalStore } from 'react'
 import type { Metric } from 'web-vitals'
 import { db, getSetting, setSetting } from '../db'
 import { isStandalone } from '../hooks'
 
 /**
  * Google Analytics 4 over plain gtag.js. Events that can't go to gtag at once (offline, script still loading or
- * failed, opt-out not yet read) wait in IndexedDB and are replayed in order. Everything is a no-op without a
- * Measurement ID, and nothing is sent after the user opts out in Settings.
+ * failed) wait in IndexedDB and are replayed in order. Analytics is always on; everything is a no-op without a
+ * Measurement ID.
  */
 
 type Param = string | number | boolean
@@ -18,12 +17,10 @@ declare global {
   interface Window {
     dataLayer: unknown[]
     gtag: (...args: unknown[]) => void
-    [gaDisable: `ga-disable-${string}`]: boolean
   }
 }
 
 const ID = (import.meta.env.VITE_GA_MEASUREMENT_ID ?? '').trim()
-const ENABLED_KEY = 'analytics_enabled'
 const FIRST_TOUCH_KEY = 'analytics_first_touch'
 /** Settings key set once the first-launch analytics notice has been dismissed. */
 export const NOTICE_KEY = 'analytics_notice_dismissed'
@@ -59,13 +56,6 @@ let started = false
 let script: 'idle' | 'loading' | 'loaded' | 'failed' | 'blocked' = 'idle'
 let onlineFailures = 0
 let failedOffline = false
-const cachedEnabled = readCachedEnabled()
-/** Whether events may be sent now. */
-let enabled = cachedEnabled !== '0'
-/** The user's latest choice, which `enabled` catches up with once any opt-out hit is out. */
-let intent = enabled
-/** False until the durable opt-out setting has been read, so a stale localStorage cache can't leak events. */
-let settled = false
 /** Queue writes not yet committed; events wait behind them so they keep their order. */
 let unwritten = 0
 let enqueued = 0
@@ -73,32 +63,10 @@ let writes: Promise<unknown> = Promise.resolve()
 let flushing = false
 /** Set when events are queued during a replay, so it runs again before stopping. */
 let again = false
-let toggles: Promise<unknown> = Promise.resolve()
 const seenErrors = new Set<string>()
-const subscribers = new Set<() => void>()
 
 export const isAnalyticsConfigured = () => ID !== ''
-export const isAnalyticsEnabled = () => intent
 const offline = () => navigator.onLine === false
-
-function subscribe(fn: () => void) {
-  subscribers.add(fn)
-  return () => {
-    subscribers.delete(fn)
-  }
-}
-
-/** The "Share usage analytics" choice, kept in sync across components. */
-export const useAnalyticsEnabled = () => useSyncExternalStore(subscribe, isAnalyticsEnabled)
-
-/** The boot-time cache of the opt-out: '1', '0', or null when missing or unreadable. */
-function readCachedEnabled(): string | null {
-  try {
-    return localStorage.getItem(ENABLED_KEY)
-  } catch {
-    return null
-  }
-}
 
 /** Removes personal details from free text before it leaves the phone, then fits GA4's 100-char limit. */
 const REDACT: RegExp[] = [
@@ -139,13 +107,13 @@ function gtagEvent(name: string, params: Clean, onSent?: () => void) {
   window.gtag('event', name.slice(0, 40), p)
 }
 
-/** Whether gtag.js is ready, the opt-out is settled and we're online, so the queue can be replayed. */
-const canReplay = () => script === 'loaded' && settled && !offline()
+/** Whether gtag.js is ready and we're online, so the queue can be replayed. */
+const canReplay = () => script === 'loaded' && !offline()
 /** Whether an event would go straight to gtag rather than behind older events in IndexedDB. */
 const canSendNow = () => canReplay() && !flushing && unwritten === 0
 
 function dispatch(name: string, params: Clean) {
-  if (!ID || !enabled || script === 'blocked') return
+  if (!ID || script === 'blocked') return
   if (canSendNow()) gtagEvent(name, params)
   else enqueue(name, params)
 }
@@ -171,7 +139,7 @@ function enqueue(name: string, params: Clean) {
 }
 
 async function flush() {
-  if (!enabled || !canReplay()) return
+  if (!canReplay()) return
   if (flushing) {
     again = true
     return
@@ -182,7 +150,7 @@ async function flush() {
       again = false
       for (;;) {
         await writes
-        if (!enabled || offline()) return
+        if (offline()) return
         const batch = await db.analyticsQueue.orderBy(':id').limit(REPLAY_BATCH).toArray()
         if (!batch.length) break
         // Delete first: a crash mid-replay may lose events, but never sends one (e.g. expense_add) twice.
@@ -230,32 +198,9 @@ function loadScript() {
 
 /** A failed load is retried on `online`, and also when the app is shown again if it failed while online. */
 function retry(e: Event) {
-  if (!enabled) return
   if (script === 'failed') {
     if (e.type === 'online' || !failedOffline) loadScript()
   } else flush()
-}
-
-function consentState(on: boolean) {
-  const v = on ? 'granted' : 'denied'
-  return { analytics_storage: v, ad_storage: v, ad_user_data: v, ad_personalization: v }
-}
-
-/** Applies an on/off choice locally: consent, the GA kill switch, the boot-time cache and the queue. */
-function apply(on: boolean) {
-  enabled = on
-  intent = on
-  for (const fn of subscribers) fn()
-  try {
-    localStorage.setItem(ENABLED_KEY, on ? '1' : '0')
-  } catch {
-    /* private mode: the settings table still has it */
-  }
-  if (!started) return
-  window[`ga-disable-${ID}`] = !on
-  window.gtag('consent', 'update', consentState(on))
-  if (on) loadScript()
-  else writes = writes.then(() => db.analyticsQueue.clear()).catch(() => {})
 }
 
 /** Each event carries the page it happened on, so events replayed later still report the right screen. */
@@ -269,7 +214,7 @@ export function track(name: string, params?: Params) {
  */
 export function trackNow(name: string, params?: Params): Promise<void> {
   return new Promise((resolve) => {
-    if (!ID || !enabled || script === 'blocked') return resolve()
+    if (!ID || script === 'blocked') return resolve()
     setTimeout(resolve, TRACK_NOW_MAX_MS)
     const p = clean({ ...context(), ...params })
     if (canSendNow()) gtagEvent(name, p, () => resolve())
@@ -309,7 +254,7 @@ function sendPageView(screen: Screen) {
   const p = page(screen)
   // Only the first page view carries the launch URL's campaign parameters (UTMs, gclid), even if it isn't sent.
   if (firstPageView) {
-    if (ID && enabled) p.page_location += campaignQuery
+    if (ID) p.page_location += campaignQuery
     firstPageView = false
   }
   track('page_view', p)
@@ -370,24 +315,6 @@ export function trackError(err: unknown, context: string, fatal = false) {
   track('exception', { description, fatal, context })
 }
 
-/** Records the choice at once (for the UI), then applies changes one at a time, skipping superseded ones. */
-export function setAnalyticsEnabled(on: boolean): Promise<unknown> {
-  intent = on
-  for (const fn of subscribers) fn()
-  toggles = toggles
-    .then(async () => {
-      if (intent !== on || on === enabled) return
-      // Only sent when it can go out at once: a queued one would be deleted with the queue by apply(false).
-      if (!on && canSendNow()) await trackNow('analytics_opt_out')
-      if (intent !== on) return
-      apply(on)
-      await setSetting(ENABLED_KEY, on ? '1' : '0').catch(() => {})
-      if (on) track('analytics_opt_in')
-    })
-    .catch(() => {})
-  return toggles
-}
-
 /** First ever launch on this device: keep the first touch and report it once. */
 async function recordFirstLaunch() {
   if (await getSetting(FIRST_TOUCH_KEY)) return
@@ -437,8 +364,6 @@ export function initAnalytics() {
     // biome-ignore lint: required by gtag.js
     window.dataLayer.push(arguments)
   }
-  window[`ga-disable-${ID}`] = !enabled
-  window.gtag('consent', 'default', consentState(enabled))
   window.gtag('js', new Date())
   window.gtag('config', ID, {
     send_page_view: false,
@@ -447,8 +372,7 @@ export function initAnalytics() {
     page_location: initialUrl.origin + initialUrl.pathname + campaignQuery,
   })
   setUserProps({ display_mode: displayMode(), app_version: __APP_VERSION__, platform: platform(), app_env: appEnv() })
-  // Without a cached '1' (first run, cleared storage), wait for the durable setting before loading gtag.js.
-  if (enabled && cachedEnabled === '1') loadScript()
+  loadScript()
 
   window.addEventListener('online', retry)
   document.addEventListener('visibilitychange', (e) => document.visibilityState === 'visible' && retry(e))
@@ -474,19 +398,6 @@ export function initAnalytics() {
     .catch(() => {})
 
   track('app_open', { display_mode: displayMode(), launch_source: initialUrl.searchParams.has('add') ? 'shortcut' : 'normal' })
-
-  // The settings table is the durable copy of the opt-out; localStorage is only a fast cache.
-  getSetting(ENABLED_KEY)
-    .then((v) => {
-      if (v === undefined) return setSetting(ENABLED_KEY, enabled ? '1' : '0')
-      if ((v === '1') !== enabled) apply(v === '1')
-    })
-    .catch(() => {})
-    .finally(() => {
-      settled = true
-      if (enabled && script === 'idle') loadScript()
-      flush()
-    })
   recordFirstLaunch().catch(() => {})
   refreshUserProps()
 }

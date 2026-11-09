@@ -84,7 +84,7 @@ db.version(2).stores({
   analyticsQueue: '++id, queued_at',
 })
 
-/** Settings about this device's analytics (opt-out, first touch, notice): kept out of backups and delete-all. */
+/** Settings about this device's analytics (first touch, notice): kept out of backups and delete-all. */
 export const isDeviceSetting = (key: string) => key.startsWith('analytics_')
 
 export const PRESET_NATURES: Omit<Nature, 'order'>[] = [

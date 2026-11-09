@@ -1,22 +1,20 @@
 import { useEffect, useState } from 'react'
 import { getSetting, setSetting } from '../db'
-import { isAnalyticsConfigured, isAnalyticsEnabled, NOTICE_KEY, useAnalyticsEnabled } from '../lib/analytics'
+import { isAnalyticsConfigured, NOTICE_KEY } from '../lib/analytics'
 import { cx } from './ui'
 
 /** One-time, non-blocking note that usage is shared with Google Analytics, above the bottom nav. */
 export function AnalyticsNotice({ suppressed, raised, onOpenSettings }: { suppressed: boolean; raised: boolean; onOpenSettings: () => void }) {
   const [show, setShow] = useState(false)
-  const enabled = useAnalyticsEnabled()
 
   useEffect(() => {
-    if (!isAnalyticsConfigured() || !isAnalyticsEnabled()) return
+    if (!isAnalyticsConfigured()) return
     getSetting(NOTICE_KEY)
       .then((v) => !v && setShow(true))
       .catch(() => {})
   }, [])
 
-  // Nothing to announce once analytics is off.
-  if (!show || suppressed || !enabled) return null
+  if (!show || suppressed) return null
 
   const dismiss = () => {
     setShow(false)
@@ -33,7 +31,7 @@ export function AnalyticsNotice({ suppressed, raised, onOpenSettings }: { suppre
       )}
     >
       <div className="pointer-events-auto flex w-full max-w-[560px] animate-toast-in items-center gap-2 rounded-field bg-inverse py-2 pr-2 pl-4 text-inverse-ink shadow-lg">
-        <span className="flex-1 t-body-sm">We use Google Analytics to improve Reimburse Me. Manage in Settings.</span>
+        <span className="flex-1 t-body-sm">Reimburse Me shares usage data with Google Analytics. If you don't want that, please stop using the app.</span>
         <button
           type="button"
           className="min-h-10 shrink-0 rounded-full px-3 t-button-sm text-inverse-ink/70 active:bg-white/10"
@@ -42,7 +40,7 @@ export function AnalyticsNotice({ suppressed, raised, onOpenSettings }: { suppre
             onOpenSettings()
           }}
         >
-          Settings
+          Details
         </button>
         <button type="button" className="min-h-10 shrink-0 rounded-full bg-accent px-4 t-button-sm text-white" onClick={dismiss}>
           OK

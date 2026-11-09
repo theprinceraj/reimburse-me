@@ -5,19 +5,18 @@ import { useToast } from '../components/Toast'
 import { Card, Field, IconButton, Inset, PaperButton, PrimaryButton, SectionLabel, Sheet, TONE_CLASSES, cx, inputClass } from '../components/ui'
 import { db, newId, PRESET_NATURES, requestPersistence, setSetting, TONES, wipeAllData } from '../db'
 import { isStandalone, useBilledTo, useInstallPrompt, useNatures, useProfile } from '../hooks'
-import { isAnalyticsConfigured, overlayView, refreshUserProps, scrubText, setAnalyticsEnabled, track, trackNow, useAnalyticsEnabled } from '../lib/analytics'
+import { isAnalyticsConfigured, overlayView, refreshUserProps, scrubText, track, trackNow } from '../lib/analytics'
 import { exportBackup, importBackup } from '../lib/backup'
 import type { Profile } from '../lib/claim'
 import { todayIso } from '../lib/format'
 import { download } from '../lib/share'
-import { Switch } from './ClaimScreen'
 
 /** The Settings install card reports being shown once per app session. */
 let installCardShown = false
 
 export function SettingsScreen() {
   const [privacyOpen, setPrivacyOpen] = useState(false)
-  const sharing = useAnalyticsEnabled() && isAnalyticsConfigured()
+  const sharing = isAnalyticsConfigured()
   return (
     <div className="flex flex-col gap-6 px-4 pt-[max(20px,env(safe-area-inset-top))]">
       <header className="pt-2">
@@ -33,7 +32,7 @@ export function SettingsScreen() {
         Reimburse Me · v{__APP_VERSION__}
         <br />
         Expenses and receipts are stored on this phone.{' '}
-        {sharing ? 'Usage and expense details are shared with Google Analytics to improve the app.' : 'Usage analytics is off.'}
+        {sharing && 'Usage and expense details are shared with Google Analytics to improve the app.'}
         {isAnalyticsConfigured() && (
           <>
             {' '}
@@ -531,20 +530,16 @@ function DataSection() {
 }
 
 function PrivacySection({ onOpenPrivacy }: { onOpenPrivacy: () => void }) {
-  const on = useAnalyticsEnabled()
   return (
     <Section icon={<ShieldCheck size={16} />} title="Privacy">
       <Card className="px-4 py-1">
-        <label className="flex min-h-16 items-center gap-3 py-3">
-          <span className="flex flex-1 flex-col gap-0.5">
-            <span className="t-body-md font-medium">Share usage analytics</span>
-            <span className="t-body-sm text-secondary">
-              Sends what you do in the app to Google Analytics: amounts, natures, companies and remarks (with personal info removed), plus your device and
-              approximate location. Receipts and your profile are never sent.
-            </span>
+        <div className="flex flex-col gap-0.5 py-3">
+          <span className="t-body-md font-medium">Usage analytics</span>
+          <span className="t-body-sm text-secondary">
+            Reimburse Me sends what you do in the app to Google Analytics: amounts, natures, companies and remarks (with personal info removed), plus your
+            device and approximate location. Receipts and your profile are never sent. If you don't want to share this, please stop using the app.
           </span>
-          <Switch checked={on} onChange={setAnalyticsEnabled} />
-        </label>
+        </div>
         <button type="button" onClick={onOpenPrivacy} className="flex min-h-12 w-full items-center justify-between border-t border-hairline t-button-sm text-primary">
           What's shared and what isn't <ChevronRight size={16} />
         </button>
@@ -569,10 +564,13 @@ function PrivacySheet({ open, onClose }: { open: boolean; onClose: () => void })
         {item('Stored on this phone', "Your expenses, receipts and profile are kept in this browser's storage. There's no account and no cloud copy, so keep backups.")}
         {item(
           'Shared with Google Analytics',
-          'While usage analytics is on, the app sends the screens you open and the actions you take, including expense amounts, nature of expense, the company billed and remarks. Emails, phone numbers, PAN, Aadhaar, UPI IDs, links and long numbers are removed from text first. Google also receives your device, browser and approximate location (from your IP address), and may use this data for advertising measurement.',
+          'The app sends the screens you open and the actions you take, including expense amounts, nature of expense, the company billed and remarks. Emails, phone numbers, PAN, Aadhaar, UPI IDs, links and long numbers are removed from text first. Google also receives your device, browser and approximate location (from your IP address), and may use this data for advertising measurement.',
         )}
         {item('Never sent', 'Receipt photos and PDFs, file names, and your name, employee ID, department and email.')}
-        {item('Your choice', 'Turn off "Share usage analytics" in Settings at any time. Nothing more is sent, and events waiting to go out while offline are deleted.')}
+        {item(
+          'Your choice',
+          "Sharing usage data is part of using Reimburse Me and can't be turned off. If you don't want to share it, please stop using the app. You can save a backup and use \"Delete all data\" in Settings first.",
+        )}
       </div>
     </Sheet>
   )
