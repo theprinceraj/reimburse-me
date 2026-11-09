@@ -73,9 +73,23 @@ export const PRESET_NATURES: Omit<Nature, 'order'>[] = [
   { id: 'client', name: 'Client Meeting', emoji: '🤝', tone: 'amber', builtIn: true },
 ]
 
+const presetNatureRows = (): Nature[] => PRESET_NATURES.map((n, i) => ({ ...n, order: i }))
+
 db.on('populate', (tx) => {
-  tx.table('natures').bulkAdd(PRESET_NATURES.map((n, i) => ({ ...n, order: i })))
+  tx.table('natures').bulkAdd(presetNatureRows())
 })
+
+/**
+ * Empties every table and restores the built-in natures. Deliberately not `db.delete()`: deleting
+ * the database waits forever while any other tab or window (e.g. a frozen background browser tab
+ * next to the installed PWA) still has it open, so the button appeared to do nothing.
+ */
+export async function wipeAllData() {
+  await db.transaction('rw', db.tables, async () => {
+    await Promise.all(db.tables.map((t) => t.clear()))
+    await db.natures.bulkAdd(presetNatureRows())
+  })
+}
 
 /** `crypto.randomUUID` needs a secure context; fall back to getRandomValues for plain-HTTP LAN testing. */
 export const newId = (): string => {

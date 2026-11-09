@@ -3,7 +3,7 @@ import { Building2, Check, Download, HardDrive, Pencil, Plus, RotateCcw, Smartph
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { useToast } from '../components/Toast'
 import { Card, Field, IconButton, Inset, PaperButton, PrimaryButton, SectionLabel, TONE_CLASSES, cx, inputClass } from '../components/ui'
-import { db, newId, PRESET_NATURES, requestPersistence, setSetting, TONES } from '../db'
+import { db, newId, PRESET_NATURES, requestPersistence, setSetting, TONES, wipeAllData } from '../db'
 import { isStandalone, useBilledTo, useInstallPrompt, useNatures, useProfile } from '../hooks'
 import { exportBackup, importBackup } from '../lib/backup'
 import type { Profile } from '../lib/claim'
@@ -459,8 +459,12 @@ function DataSection() {
                 type="button"
                 className="min-h-10 rounded-full bg-error px-4 t-button-sm text-white"
                 onClick={async () => {
-                  await db.delete()
-                  location.reload()
+                  try {
+                    await wipeAllData()
+                    location.reload()
+                  } catch {
+                    toast("Couldn't delete your data. Close other tabs of this app and try again.")
+                  }
                 }}
               >
                 Delete
