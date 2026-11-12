@@ -2,12 +2,13 @@
 
 A phone-first PWA for logging work expenses and turning them into a reimbursement claim.
 Styled with Qoody's "Warm Tactile Ledger" design system. Expenses, receipts and the profile are stored only on
-the device (IndexedDB); usage and expense details are sent to Google Analytics 4 unless the user opts out in Settings
+the device (IndexedDB); usage and expense details are always sent to Google Analytics 4, with no opt-out
 (see [Analytics](#analytics)).
 
 ## Features
 - Expenses with **Date, Amount (₹), Nature of expense** (optional, colour-coded presets + custom),
-  **Remarks** (optional), **Billed to** (saved list + add new) and receipt photos (compressed on-device).
+  **Remarks** (optional), **Billed to** (saved list + add new) and receipts: photos (compressed on-device) or PDFs
+  (each page, up to 10, rendered to an image on-device and handled like a photo).
 - Monthly ledger grouped by day, per-company breakdown, search, company filter.
 - **Claim export**: filter by company + period → PDF claim sheet (with receipts and sign-off lines) or CSV.
 - Backup / restore (JSON incl. receipts), storage-persistence request, delete-all.
